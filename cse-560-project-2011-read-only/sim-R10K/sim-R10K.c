@@ -476,6 +476,31 @@ static struct respool_t *respool = NULL;
 /* address disambiguation collision history table */
 static struct cht_t *cht = NULL;
 
+//TODO: print instruction info nicely
+STATIC void
+INSN_print(struct INSN_station_t *is){
+
+	fprintf(stdout,"\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+	fprintf(stdout,"\nPRINTING INSTRUCTION WITH POINTER: %p\n",is);
+	if(is){
+		fprintf(stdout,"\tINSTRUCTION PC: %d\n",is->PC);
+		fprintf(stdout,"\tPART OF CHECKPOINT: %d\n",is->checkpoint);
+		if(is->pdi){
+			fprintf(stdout,"\tINSTRUCTION TYPE: %d\n",is->pdi->iclass);
+		}
+		else{
+			fprintf(stdout,"\tINSTRUCTION TYPE: UNINITIALIZED!\n");
+		}
+	}
+	else{
+		fprintf(stdout,"\tINSTRUCTION POINTER INVALID!!");
+	}
+
+
+	fprintf(stdout,"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
+}
+
+
 /* simulator implementation */
 
 /* INSN_station_t freelist and queue management functions */
@@ -1102,6 +1127,8 @@ PLINK_freeCheckpoint_list(struct PREG_link_t **queue, struct PREG_link_t *l, int
 		{
 			lf = lc;
 			lc = lc->next;
+			//TODO: Reduce the number of readers for every queue entry removed.
+			REGS_removeReader(lf->preg->is);
 			PLINK_free(lf);
 			while(lc)
 			{
@@ -1118,6 +1145,8 @@ PLINK_freeCheckpoint_list(struct PREG_link_t **queue, struct PREG_link_t *l, int
 				if(currentCheckpoint == checkpoint)
 				{
 					lc = lc->next;
+					//TODO: Reduce the number of readers for every queue entry removed.
+					REGS_removeReader(lf->preg->is);
 					PLINK_free(lf);
 
 					if(!lc){
@@ -1159,6 +1188,8 @@ PLINK_freeCheckpoint_list(struct PREG_link_t **queue, struct PREG_link_t *l, int
 			{
 				lc->next = lf->next;
 				lf = lc;
+				//TODO: Reduce the number of readers for every queue entry removed.
+				REGS_removeReader(lf->preg->is);
 				PLINK_free(lf);
 			}
 			else
@@ -1179,6 +1210,8 @@ PLINK_freeCheckpoint_list(struct PREG_link_t **queue, struct PREG_link_t *l, int
 		{
 
 			lf->next = NULL;
+			//TODO: Reduce the number of readers for every queue entry removed.
+			REGS_removeReader(lc->preg->is);
 			PLINK_free(lc);
 		}
 	}
@@ -1885,14 +1918,14 @@ REGS_add_regs_free_list (int checkpoint)
 		struct preg_t *preg = &pregs[pregnum];
 
 		//if ( (pregs[pregnum]->f_allocated) & (pregs[pregnum]->read_counter == 0) & (pregs[pregnum]->checkpoint == checkpoint) )
-		if ( (preg->f_allocated) & (preg->read_counter == 0) & (preg->checkpoint == checkpoint) )
+		if ( (preg->f_allocated) && (preg->read_counter == 0) && (preg->checkpoint == checkpoint) )
 
 		{
 			//check here if there is a latest mapping in the map table. if not, make f_allocated false and add to free list.
 			mapping = 0;
 			for(lregnum = 0; lregnum < MD_TOTAL_REGS; lregnum ++)
 			{
-				if( (lregs[lregnum] = pregnum) & (mapping!= 1) )
+				if( (lregs[lregnum] = pregnum) && (mapping!= 1) )
 				{
 					mapping = 1;
 				}
@@ -1900,7 +1933,8 @@ REGS_add_regs_free_list (int checkpoint)
 
 			if (mapping == 0) //mapping is 0, free the reg
 			{
-				fprintf(stdout, "~!~!~!~!~!~!~!~!~!~!~!~!~!~WE CALLED THIS~!~!~!~!~!~!~!~!~!~!~!~!~!~!~!~\n");
+				fprintf(stdout, "SETTING F_ALLOCATED FALSE REGS_add_regs_free_list\n");
+				INSN_print(preg->is);
 				preg->f_allocated = FALSE;
 				// free output dependence tree
 				PLINK_free_list(preg->odeps_head);
@@ -1963,6 +1997,8 @@ REGS_revert_checkpoint (int checkpoint, regnum_t *map_table)
 		if(!(CHECK_isInUse(preg->checkpoint)) && preg->f_allocated)
 		{
 			//this preg belongs to a checkpoint not in use. The reg must be added to the free list.
+			fprintf(stdout, "SETTING F_ALLOCATED FALSE REGS_revert_checkpoint\n");
+			INSN_print(preg->is);
 			preg->f_allocated = FALSE;
 			preg->checkpoint = -1;
 			preg->read_counter = 0;
@@ -2064,6 +2100,8 @@ regs_rename(regnum_t lregnum)
 {
 	if (lregnum == regnum_NONE)
 		panic("shouldn't be renaming this register!");
+	struct preg_t *pregWork = pregs;
+	pregWork[lregs[lregnum]].read_counter++;
 
 	return lregs[lregnum];
 }
@@ -2589,7 +2627,7 @@ scheduler_enqueue(struct preg_t *preg) 		/* IS to enqueue */
 		scheduler_queue = new_node;
 	}
 	fprintf(stdout, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ADDING TO SCHEDULER QUEUE~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-	fprintf(stdout, "INSN: %d	CHECKPOINT: %d	PC: %d\n", preg->is->pdi->iclass, preg->is->checkpoint, preg->is->PC);
+	INSN_print(preg->is);
 
 	preg->is->when.ready = MAX(preg->is->when.regread, sim_cycle);
 }
@@ -2656,6 +2694,7 @@ commit_stage(void)
 		struct preg_t *preg = &pregs[is->pregnums[DEP_O1]];
 		struct preg_t *freg = &pregs[is->fregnum];
 
+		INSN_print(is);
 		//TODO: if store/load isn't set to commit, break
 		if(!is->ls->commit)
 			break;
@@ -2907,7 +2946,6 @@ writeback_stage(void)
 
 			//TODO: no more ROB recovery
 //			ROB_recover(is, /* f_bmisp */TRUE);
-			fprintf(stdout, "CALLING RECOVER FROM WRITEBACK\n");
 			IFQ_recover(is);
 
 			/* recover branch predictor state */
@@ -2996,11 +3034,12 @@ writeback_stage(void)
 		is->when.committed = sim_cycle;
 		fprintf(stdout, "~~~~~~~~~~~~~~~~~~~~~~~WRITEBACK COMMIT INSTRUCTION~~~~~~~~~~~~~~~~~~~~~~~\n");
 		fprintf(stdout, "INSN TYPE: %d	CHECKPOINT: %d	PC: %d\n", is->pdi->iclass, is->checkpoint, is->PC);
+	    REGS_removeReader(is);
 		CHECK_RemoveInstruction(is->checkpoint, is->pdi->iclass);
-		if(is->pdi->iclass != ic_load && is->pdi->iclass != ic_store && is->pdi->iclass != ic_prefetch && is->pdi->iclass != ic_sys){
-			INSN_remove(&IFQ, is);
-			INSN_free(is);
-		}
+//		if(is->pdi->iclass != ic_load && is->pdi->iclass != ic_store && is->pdi->iclass != ic_prefetch && is->pdi->iclass != ic_sys){
+//			INSN_remove(&IFQ, is);
+//			INSN_free(is);
+//		}
 
 	}  /* for all writeback events */
 }
@@ -3052,10 +3091,6 @@ schedule_stage(void)
 
 	memset((byte_t*)sched_n, 0, sclass_NUM * sizeof(int));
 
-	PLINK_printList(scheduler_queue);
-
-//	fprintf(stdout, "sched_n[sclass_TOTAL]: %d	sched_width[sclass_TOTAL]: %d	SCHEDULER QUEUE: %p\n", sched_n[sclass_TOTAL], sched_width[sclass_TOTAL], scheduler_queue);
-
 	/* walk over list of ready un-scheduled instructions, issue the N
      oldest possible ones */
 	for (pnode = NULL, node = scheduler_queue;
@@ -3081,7 +3116,7 @@ schedule_stage(void)
 
 
 		fprintf(stdout, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~REMOVE FROM SCHEDULER QUEUE~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-		fprintf(stdout, "INSN: %d	CHECKPOINT: %d	PC: %d\n", is->pdi->iclass, is->checkpoint, is->PC);
+		INSN_print(preg->is);
 
 		/* Enforce in-order issue? */
 		if (sched_inorder && is->prev && !is->prev->when.issued)
@@ -3195,7 +3230,6 @@ schedule_stage(void)
 
 				//TODO: no ROB recover
 //				ROB_recover(lis_prev, /* f_bmisp */FALSE);
-				fprintf(stdout, "CALLING RECOVER FROM SCHEDULE\n");
 				IFQ_recover(lis_prev);
 
 				if (bpred)
@@ -3528,7 +3562,7 @@ rename_stage(void)
 //		if (ROB.num > 0 && ROB.tail->pdi->iclass == ic_sys)
 //			break;
 		fprintf(stdout, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~INSN RENAME~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-		fprintf(stdout, "INSN: %d PC: %d\n", is->pdi->iclass, is->PC);
+		INSN_print(is);
 
 		//TODO: Allocating checkpoints
 		if(is->pdi->iclass == ic_ctrl) {
@@ -3640,7 +3674,7 @@ fetch_stage(void)
 //	fprintf(stdout, "FETCH WIDTH: %d\n", fetch_width);
 //	fprintf(stdout, "INSN_flist: %p\n", INSN_flist);
 //	fprintf(stdout, "IFQ num: %d	IFQ size: %d\n", IFQ.num, IFQ.size);
-	fprintf(stdout, "Valid text address: %d		Fetch PC: %d\n", valid_text_address(mem, fetch_PC), fetch_PC);
+//	fprintf(stdout, "Valid text address: %d		Fetch PC: %d\n", valid_text_address(mem, fetch_PC), fetch_PC);
 
 	for (fetch_n = 0;
 			/* fetch up to as many instruction as the DISPATCH
@@ -3695,9 +3729,7 @@ fetch_stage(void)
 		/* I-cache and I-tlb hit here */
 		is = INSN_alloc();
 
-		fprintf(stdout, "BEFORE is->PC = fetch_PC: %d\n", is->PC);
 		is->PC = fetch_PC;
-		fprintf(stdout, "AFTER is->PC = fetch_PC: %d\n", is->PC);
 		is->seq = ++seq;
 		is->pdi = pdi;
 		is->when.fetched = sim_cycle + fetch_lat;
@@ -3789,32 +3821,42 @@ sim_sample_on(unsigned long long n_insn)
 	{
 		/* commit entries from RUU/LSQ to architected register file */
 		fprintf(stdout, "*************************BEFORE COMMIT STAGE*************************\n");
+		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE COMMIT IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 		commit_stage();
 		fprintf(stdout, "*************************AFTER COMMIT STAGE*************************\n");
+		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER COMMIT IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 
 		/* service result completions, also readies dependent operations */
 		/* ==> inserts operations into ready queue --> register deps resolved */
 		fprintf(stdout, "*************************BEFORE WRITEBACK STAGE*************************\n");
+		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE WRITEBACK IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 		writeback_stage();
 		fprintf(stdout, "*************************AFTER WRITEBACK STAGE*************************\n");
+		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER WRITEBACK IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 
 		/* invoke scheduler to schedule ready or partially ready events.
          The two schedulers act in parallel but are written separately
          for clarity */
 		fprintf(stdout, "*************************BEFORE SCHEDULE STAGE*************************\n");
+		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE SCHEDULE IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 		schedule_stage();
 		fprintf(stdout, "*************************AFTER SCHEDULE STAGE*************************\n");
+		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER SCHEDULE IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 
 		/* decode and dispatch new operations */
 		/* ==> insert ops w/ no deps or all regs ready --> reg deps resolved */
 		fprintf(stdout, "*************************BEFORE RENAME STAGE*************************\n");
+		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE RENAME IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 		rename_stage();
 		fprintf(stdout, "*************************AFTER RENAME STAGE*************************\n");
+		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER RENAME IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 
 		/* call instruction fetch unit if it is not blocked */
 		fprintf(stdout, "*************************BEFORE FETCH STAGE*************************\n");
+		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE FETCH IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 		fetch_stage();
 		fprintf(stdout, "*************************AFTER FETCH STAGE*************************\n");
+		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER FETCH IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 
 		if (insn_limit != 0 && n_insn_commit_sum >= insn_limit)
 		{
