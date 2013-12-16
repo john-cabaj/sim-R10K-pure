@@ -1997,8 +1997,6 @@ REGS_revert_checkpoint (int checkpoint, regnum_t *map_table)
 		if(!(CHECK_isInUse(preg->checkpoint)) && preg->f_allocated)
 		{
 			//this preg belongs to a checkpoint not in use. The reg must be added to the free list.
-			fprintf(stdout, "SETTING F_ALLOCATED FALSE REGS_revert_checkpoint\n");
-			INSN_print(preg->is);
 			preg->f_allocated = FALSE;
 			preg->checkpoint = -1;
 			preg->read_counter = 0;
@@ -2694,10 +2692,11 @@ commit_stage(void)
 		struct preg_t *preg = &pregs[is->pregnums[DEP_O1]];
 		struct preg_t *freg = &pregs[is->fregnum];
 
-		INSN_print(is);
 		//TODO: if store/load isn't set to commit, break
 		if(!is->ls->commit)
 			break;
+
+		INSN_print(is);
 
 		/* at least RUU entry must be complete.  BTW, complete
 	 means complete last cycle */
@@ -2802,7 +2801,7 @@ commit_stage(void)
 //		regs_commit(is->pregnums[DEP_O1]);
 //
 //		/* committing now */
-//		is->when.committed = sim_cycle;
+		is->when.committed = sim_cycle;
 //
 //		/* free over-written register */
 //		if (freg->is) panic("what is this guy still doing with an IS?");
@@ -2816,13 +2815,13 @@ commit_stage(void)
 //		preg->is = NULL;
 //
 //		/* external per-instruction instance counter, occasionally useful */
-//		commit_NPC = is->NPC;
+		commit_NPC = is->NPC;
 //
 //		INSN_remove(&ROB, is);
-//		INSN_free(is);
+		INSN_free(is);
 //
 //		/* one more instruction committed to architected state */
-//		commit_n++;
+		commit_n++;
 	}
 }
 
@@ -3036,10 +3035,12 @@ writeback_stage(void)
 		fprintf(stdout, "INSN TYPE: %d	CHECKPOINT: %d	PC: %d\n", is->pdi->iclass, is->checkpoint, is->PC);
 	    REGS_removeReader(is);
 		CHECK_RemoveInstruction(is->checkpoint, is->pdi->iclass);
-//		if(is->pdi->iclass != ic_load && is->pdi->iclass != ic_store && is->pdi->iclass != ic_prefetch && is->pdi->iclass != ic_sys){
+
+		//TODO: was breaking the IFQ
+		if(is->pdi->iclass != ic_load && is->pdi->iclass != ic_store && is->pdi->iclass != ic_prefetch && is->pdi->iclass != ic_sys){
 //			INSN_remove(&IFQ, is);
-//			INSN_free(is);
-//		}
+			INSN_free(is);
+		}
 
 	}  /* for all writeback events */
 }
@@ -3114,9 +3115,6 @@ schedule_stage(void)
 
 		is = preg->is;
 
-
-		fprintf(stdout, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~REMOVE FROM SCHEDULER QUEUE~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-		INSN_print(preg->is);
 
 		/* Enforce in-order issue? */
 		if (sched_inorder && is->prev && !is->prev->when.issued)
@@ -3534,7 +3532,9 @@ rename_stage(void)
 		struct INSN_station_t *is = IFQ.head;
 		struct preg_t *preg = NULL;
 		int dep = 0;
-		int set_checkpoint = 0;
+
+		//TODO: variable for the checkpoint number being set
+		int set_checkpoint = -1;
 
 		/* un-acceptable path */
 		if (!sched_spec && f_wrong_path)
@@ -3638,8 +3638,9 @@ rename_stage(void)
 
 		/* execute the instruction. Actual instruction execution happens
          here, schedule stage only computes latencies */
+		fprintf(stdout, "FAULTING!: %d   INSN: %d    CHECKPOINT: %d    PC: %d\n", pregs[is->pregnums[DEP_O1]].fault, is->pdi->iclass, is->checkpoint, is->PC);
 		exec_insn(is);
-
+		fprintf(stdout, "FAULTING!: %d   INSN: %d    CHECKPOINT: %d    PC: %d\n", pregs[is->pregnums[DEP_O1]].fault, is->pdi->iclass, is->checkpoint, is->PC);
 		/* connect register dependences.  Put on scheduling queue if instruction is ready */
 		preg_connect_deps(preg);
 		scheduler_enqueue(preg);
@@ -3819,44 +3820,44 @@ sim_sample_on(unsigned long long n_insn)
      to eliminate this/next state synchronization and relaxation problems */
 	while (n_insn == 0 ||  n_insn_commit_sum < n_insn_commit_sum_beg + n_insn)
 	{
-		/* commit entries from RUU/LSQ to architected register file */
-		fprintf(stdout, "*************************BEFORE COMMIT STAGE*************************\n");
-		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE COMMIT IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
+//		/* commit entries from RUU/LSQ to architected register file */
+//		fprintf(stdout, "*************************BEFORE COMMIT STAGE*************************\n");
+//		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE COMMIT IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 		commit_stage();
-		fprintf(stdout, "*************************AFTER COMMIT STAGE*************************\n");
-		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER COMMIT IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
+//		fprintf(stdout, "*************************AFTER COMMIT STAGE*************************\n");
+//		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER COMMIT IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 
 		/* service result completions, also readies dependent operations */
 		/* ==> inserts operations into ready queue --> register deps resolved */
-		fprintf(stdout, "*************************BEFORE WRITEBACK STAGE*************************\n");
-		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE WRITEBACK IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
+//		fprintf(stdout, "*************************BEFORE WRITEBACK STAGE*************************\n");
+//		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE WRITEBACK IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 		writeback_stage();
-		fprintf(stdout, "*************************AFTER WRITEBACK STAGE*************************\n");
-		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER WRITEBACK IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
+//		fprintf(stdout, "*************************AFTER WRITEBACK STAGE*************************\n");
+//		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER WRITEBACK IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 
 		/* invoke scheduler to schedule ready or partially ready events.
          The two schedulers act in parallel but are written separately
          for clarity */
-		fprintf(stdout, "*************************BEFORE SCHEDULE STAGE*************************\n");
-		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE SCHEDULE IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
+//		fprintf(stdout, "*************************BEFORE SCHEDULE STAGE*************************\n");
+//		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE SCHEDULE IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 		schedule_stage();
-		fprintf(stdout, "*************************AFTER SCHEDULE STAGE*************************\n");
-		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER SCHEDULE IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
+//		fprintf(stdout, "*************************AFTER SCHEDULE STAGE*************************\n");
+//		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER SCHEDULE IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 
 		/* decode and dispatch new operations */
 		/* ==> insert ops w/ no deps or all regs ready --> reg deps resolved */
-		fprintf(stdout, "*************************BEFORE RENAME STAGE*************************\n");
-		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE RENAME IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
+//		fprintf(stdout, "*************************BEFORE RENAME STAGE*************************\n");
+//		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE RENAME IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 		rename_stage();
-		fprintf(stdout, "*************************AFTER RENAME STAGE*************************\n");
-		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER RENAME IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
+//		fprintf(stdout, "*************************AFTER RENAME STAGE*************************\n");
+//		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER RENAME IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 
 		/* call instruction fetch unit if it is not blocked */
-		fprintf(stdout, "*************************BEFORE FETCH STAGE*************************\n");
-		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE FETCH IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
+//		fprintf(stdout, "*************************BEFORE FETCH STAGE*************************\n");
+//		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$BEFORE FETCH IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 		fetch_stage();
-		fprintf(stdout, "*************************AFTER FETCH STAGE*************************\n");
-		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER FETCH IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
+//		fprintf(stdout, "*************************AFTER FETCH STAGE*************************\n");
+//		fprintf(stdout, "$$$$$$$$$$$$$$$$$$$$$$$$$AFTER FETCH IFQ NUM: %d$$$$$$$$$$$$$$$$$$$$$$$$$\n", IFQ.num);
 
 		if (insn_limit != 0 && n_insn_commit_sum >= insn_limit)
 		{
