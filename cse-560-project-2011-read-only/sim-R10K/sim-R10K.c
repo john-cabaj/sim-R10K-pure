@@ -1925,7 +1925,7 @@ REGS_add_regs_free_list (int checkpoint)
 			mapping = 0;
 			for(lregnum = 0; lregnum < MD_TOTAL_REGS; lregnum ++)
 			{
-				if( (lregs[lregnum] = pregnum) && (mapping!= 1) )
+				if( (lregs[lregnum] == pregnum) && (mapping!= 1) )
 				{
 					mapping = 1;
 				}
